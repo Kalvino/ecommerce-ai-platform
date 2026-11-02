@@ -1,0 +1,12 @@
+# Local Environment Variables
+.env
+.env.local
+backend/.env
+
+# Python compilation files
+__pycache__/
+*.pyc
+
+# OS Specific
+.DS_Store
+
