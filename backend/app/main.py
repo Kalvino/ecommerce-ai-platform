@@ -35,6 +35,10 @@ class UserQueryRequest(BaseModel):
     message: str
     user_email: EmailStr
     thread_id: str  # Add this line to accept session IDs from Next.js
+    
+class ResumeWorkflowRequest(BaseModel):
+    thread_id: str
+    approved: bool
 
 @app.get("/health", status_code=status.HTTP_200_OK)
 async def system_health_check():
@@ -76,23 +80,18 @@ async def stream_agent_workflow(payload: UserQueryRequest):
                 # We utilize stream_mode="updates" to capture single-node delta changes instantly
                 async for chunk in runtime_graph.astream(initial_graph_state, config=graph_config, stream_mode="updates"):
                     for node_name, node_output in chunk.items():
-                    
+                        
+                         # Check if the graph state has transitioned into a hold flag constraint pattern
+                        if node_output.get("requires_human_approval"):
+                            yield f"data: {json.dumps({'event': 'approval_required', 'reason': node_output.get('escalation_reason')})}\n\n"
+                            return # Terminate stream channel loop immediately so it remains frozen on the DB layer
+                            
                         # Package metadata about which agent node is running
-                        meta_event = {
-                            "event": "node_update",
-                            "node": node_name,
-                            "next_action": node_output.get("next_action", "none")
-                        }
-                        yield f"data: {json.dumps(meta_event)}\n\n"
+                        yield f"data: {json.dumps({'event': 'node_update', 'node': node_name, 'next_action': node_output.get('next_action', 'none')})}\n\n"
                         
                         # If the node produced a fresh textual response, extract and stream it immediately
                         if "messages" in node_output and node_output["messages"]:
-                            last_message = node_output["messages"][-1]
-                            token_event = {
-                                "event": "text_chunk",
-                                "content": last_message.content
-                            }
-                            yield f"data: {json.dumps(token_event)}\n\n"
+                            yield f"data: {json.dumps({'event': 'text_chunk', 'content': node_output['messages'][-1].content})}\n\n"
                     
                     # Tiny yielding pause to keep network frames clean and manageable
                     await asyncio.sleep(0.05)
@@ -107,4 +106,26 @@ async def stream_agent_workflow(payload: UserQueryRequest):
             print("⚠️ Next.js server disconnected from active streaming channel pipeline prematurely.")
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+    
+
+@app.post("/api/v1/agent/resume", dependencies=[Depends(validate_api_key)])
+async def resume_agent_workflow(payload: ResumeWorkflowRequest):
+    """Accepts explicit physical UI click events to resume or cancel frozen graph states."""
+    DB_URI = os.getenv("DATABASE_URL")
+    graph_config = {"configurable": {"thread_id": payload.thread_id}}
+    
+    async with AsyncPostgresSaver.from_conn_string(DB_URI) as memory_pool:
+        runtime_graph = workflow.compile(checkpointer=memory_pool)
+        
+        if payload.approved:
+            # Passing None as the input payload tells LangGraph to resume from its exact saved checkpoint state
+            await runtime_graph.ainvoke(None, config=graph_config)
+            return {"status": "resumed", "detail": "Human supervisor approved transaction path execution."}
+        else:
+            # Overwrite the state manually to force an exit branch sequence termination
+            await runtime_graph.aupdate_state(
+                graph_config,
+                {"next_action": "reply", "messages": [HumanMessage(content="Action denied by supervisor.")]}
+            )
+            return {"status": "denied", "detail": "Transaction execution blocked safely out of view."}
 

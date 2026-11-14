@@ -1,0 +1,34 @@
+tasks:
+  db:
+    cmd: "zsh -c 'docker compose up -d && docker compose logs -f'"
+    ready:
+      tcp: 5432
+    stop:
+      cmd: "docker compose down"
+      timeout: 30s
+    autostart: true
+
+  ollama:
+    cmd: >-
+      zsh -c 'if curl -s http://localhost:11434 >/dev/null; then
+      echo "Ollama already running on 11434. Streaming systemd logs...";
+      journalctl -u ollama -f;
+      else ollama serve; fi'
+    ready:
+      tcp: 11434
+    autostart: true
+
+  backend:
+    cwd: "./backend"
+    cmd: "zsh -c 'source .venv/bin/activate && uv run uvicorn app.main:app --reload --port 8000'"
+    deps: [db, ollama]
+    ready:
+      tcp: 8000
+    autorestart: on-failure
+    autostart: true
+
+  frontend:
+    cwd: "./frontend"
+    cmd: "pnpm dev"
+    deps: [backend]
+    autostart: true

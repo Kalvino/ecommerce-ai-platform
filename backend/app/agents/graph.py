@@ -34,15 +34,27 @@ LLM_WITH_TOOLS = LLM.bind_tools(list(TOOLS_BY_NAME.values()))
 
 # ==========================================
 # 🧠 NODE DEFINITIONS (The Agents)
-# ==========================================
-
+# ==========================================    
+    
 def router_agent(state: AgentWorkflowState) -> Dict[str, Any]:
     """
-    Analyzes user text intent and decides whether to route the conversation 
-    to RAG search, Account Database queries, or escalate immediately.
+    Analyzes user text intent, screens for high-risk modifications to trigger 
+    Human-in-the-Loop intercepts, and handles workflow branch routing.
     """
     messages = state["messages"]
     
+    # 1. Immediate high-risk screen of the absolute latest user input string
+    last_user_message = messages[-1].content.lower()
+    high_risk_keywords = ["change", "modify", "update", "cancel", "edit", "reroute"]
+    
+    if any(keyword in last_user_message for keyword in high_risk_keywords):
+        return {
+            "next_action": "fetch_orders",
+            "requires_human_approval": True,
+            "escalation_reason": "Customer initiated a sensitive core transaction state modification request."
+        }
+    
+    # 2. Standard operational routing system prompt for generic/RAG path mapping
     system_prompt = SystemMessage(content=(
         "You are the Lead Router for an elite E-commerce Logistics platform.\n"
         "Analyze the conversation history. Decide the next best action from these three:\n"
@@ -52,11 +64,10 @@ def router_agent(state: AgentWorkflowState) -> Dict[str, Any]:
         "Respond strictly with just the single action word: 'fetch_orders', 'call_rag', or 'reply'."
     ))
     
-    # Simple semantic fallback or LLM call to get routing action
     response = LLM.invoke([system_prompt] + messages)
     action = response.content.strip().lower()
     
-    # Clean up responses to ensure strict routing values
+    # 3. Dynamic output normalization map
     if "order" in action or "fetch_orders" in action:
         next_action = "fetch_orders"
     elif "rag" in action or "call_rag" in action:
@@ -64,7 +75,11 @@ def router_agent(state: AgentWorkflowState) -> Dict[str, Any]:
     else:
         next_action = "reply"
         
-    return {"next_action": next_action}
+    return {
+        "next_action": next_action,
+        "requires_human_approval": False, # Ensure reset on standard routing turns
+        "escalation_reason": None
+    }
 
 
 def rag_specialist_agent(state: AgentWorkflowState) -> Dict[str, Any]:
@@ -190,7 +205,11 @@ with PostgresSaver.from_conn_string(DB_URI) as memory_pool:
     # 2. Run migrations automatically to build the `checkpoints`, `writes`, etc. tables
     memory_pool.setup()
     
+    # Compile the graph telling the engine to freeze automatically before entering account_ops
     # 3. Compile framework diagram layout WITH checkpointer memory active
-    compiled_graph = workflow.compile(checkpointer=memory_pool)
+    compiled_graph = workflow.compile(
+        checkpointer=memory_pool,
+        interrupt_before=["account_ops"] # ◄— Dynamic breakpoint intercept hook registered here!
+    )
 
 print("🕸️  LangGraph Multi-Agent execution matrix compiled with active PostgresSaver memory checkpoint loops.")

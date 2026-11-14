@@ -48,3 +48,29 @@ memory checkpointing and semantic search. Optimized for 100% private local execu
 *   **Inference Management:** Ollama Client (Model Engine: `llama3.2:3b`)
 *   **Database & Memory Infrastructure:** PostgreSQL 16 (Pre-bundled inside Docker Compose with native `pgvector` capability)
 *   **Data Validation & Transport:** Pydantic v2, Object-Relational Mappers (SQLAlchemy), `AsyncPostgresSaver`
+
+## Setup
+1. Start Database Service
+
+```zsh
+docker compose -p ecommerce-ai-platform up -d
+```
+2. Start Python FastAPI Backend
+
+```zsh
+source .venv/bin/activate 
+```
+```zsh
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+3. Start Ollama
+Ensure Ollama background server is running
+```zsh
+ollama serve
+```
+4. Start the front end
+Ensure next is running
+```zsh
+pnpm dev
+```

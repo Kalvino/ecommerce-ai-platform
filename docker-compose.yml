@@ -1,9 +1,10 @@
-version: '3.8'
+name: ecommerce-ai-platform
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16 
+    image: pgvector/pgvector:pg16
     container_name: ecommerce_ai_db
+    restart: unless-stopped
     ports:
       - "5432:5432"
     environment:
@@ -14,6 +15,12 @@ services:
       - pgdata:/var/lib/postgresql/data
     networks:
       - ecommerce_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 networks:
   ecommerce_network:
@@ -21,4 +28,3 @@ networks:
 
 volumes:
   pgdata:
-

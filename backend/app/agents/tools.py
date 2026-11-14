@@ -2,6 +2,13 @@ from langchain_core.tools import tool
 from sqlalchemy import text
 from app.database import engine
 from typing import Dict, Any, List
+from langchain_community.embeddings import OllamaEmbeddings
+
+# Initialize local embedding layer
+embeddings_engine = OllamaEmbeddings(
+    model="all-minilm:l6-v2",
+    base_url="http://localhost:11434"
+)
 
 @tool
 def lookup_customer_profile(email: str) -> Dict[str, Any]:
@@ -57,15 +64,24 @@ def track_customer_orders(user_id: int) -> List[Dict[str, Any]]:
 @tool
 def search_shipping_and_return_policies(query_text: str) -> str:
     """
-    Simulates a vector-store semantic search against the knowledge base 
-    to retrieve shipping speeds, refund windows, and general policies.
+    Performs a real-time semantic vector similarity search against the database knowledge base
+    to retrieve shipping speeds, refund timelines, and warehouse operational policies.
     """
-    # This is a temporary structural fallback placeholder until we populate embeddings in Step 5.
-    # It allows your agents to get immediate, predictable policy answers during integration testing.
-    lowercased = query_text.lower()
-    if "return" in lowercased or "refund" in lowercased:
-        return "Policy: Standard items can be returned within 30 days of delivery. Refunds take 5-7 business days."
-    if "shipping" in lowercased or "delivery" in lowercased:
-        return "Policy: Standard shipping takes 3-5 business days. Express shipping takes 1-2 days. Orders over KSh 5,000 ship free."
+    # 1. Compute embedding vector for the incoming raw search text string
+    raw_vector = embeddings_engine.embed_query(query_text)
     
-    return "Policy: For complex delivery issues or manual modifications, escalate to a human supervisor."
+    # 2. Query using native pgvector cosine distance operator (<=>)
+    query = text("""
+        SELECT content, metadata
+        FROM knowledge_base
+        ORDER BY embedding <=> :embedded_query
+        LIMIT 1;
+    """)
+    
+    with engine.connect() as conn:
+        row = conn.execute(query, {"embedded_query": str(raw_vector)}).mappings().first()
+        
+    if not row:
+        return "No explicit matching company logistics rules uncovered in corporate knowledge base maps."
+        
+    return f"Extracted Corporate Policy Context:\n{row['content']}"
